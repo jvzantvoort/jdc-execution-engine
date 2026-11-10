@@ -20,7 +20,3 @@
         that:
           - "'192.168.1.10' is ansible.utils.ipv4_address"
 
-    - name: Check that the OpenTelemetry callback is enabled
-      ansible.builtin.assert:
-        that:
-          - "'community.general.opentelemetry' in lookup('ansible.builtin.config', 'CALLBACKS_ENABLED')"

@@ -24,6 +24,12 @@ def main(path):
     if missing:
         print(f"FAIL: missing spans: {sorted(missing)}", file=sys.stderr)
         return 1
+    # Privacy defaults: no task arguments, no task results (facts) in spans
+    leaked = [s["name"] for s in spans
+              if s.get("events") or any(k.startswith("ansible.task.args") for k in s.get("attributes", {}))]
+    if leaked:
+        print(f"FAIL: task args/results leaked into spans: {leaked}", file=sys.stderr)
+        return 1
     if len(trace_ids) != 1:
         print("FAIL: expected all spans in a single trace", file=sys.stderr)
         return 1

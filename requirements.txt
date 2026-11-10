@@ -1,4 +1,5 @@
-# Python packages installed into the EE (in addition to collection deps)
+# Python packages installed into the EE (in addition to collection deps).
+# Exact versions are locked in files/constraints.txt.
 jmespath
 netaddr
 # OpenTelemetry: needed by the community.general.opentelemetry callback

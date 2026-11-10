@@ -1,19 +1,18 @@
 ---
-# Ansible Execution Environment with OpenTelemetry tracing enabled
+# Ansible Execution Environment with OpenTelemetry tracing
 # (ansible-builder schema v3). Build with: make build
 version: 3
 
-build_arg_defaults:
-  ANSIBLE_GALAXY_CLI_COLLECTION_OPTS: "--pre"
-
 images:
   base_image:
-    name: registry.access.redhat.com/ubi9/ubi:latest
+    # Pinned by digest for reproducible builds; Renovate bumps tag and digest.
+    name: registry.access.redhat.com/ubi9/ubi:9.8@sha256:87f66688da4e206d5a1877088626c542288a5ccd97898cf363b588d57817e6be
 
 dependencies:
   python_interpreter:
     package_system: python3.12
     python_path: /usr/bin/python3.12
+  # Exact versions come from files/constraints.txt
   ansible_core:
     package_pip: ansible-core>=2.18,<2.21
   ansible_runner:
@@ -30,26 +29,47 @@ options:
 additional_build_files:
   - src: files/ansible.cfg
     dest: configs
+  - src: files/constraints.txt
+    dest: configs
+  - src: files/callback
+    dest: callback
 
 additional_build_steps:
   prepend_base:
     - RUN $PKGMGR -y upgrade && $PKGMGR clean all
+    # Lock every pip install in every stage to files/constraints.txt.
+    # A build ARG (not ENV) so it doesn't leak into images built FROM this one.
+    # `make lock` builds with PIP_CONSTRAINT= to resolve fresh versions.
+    - COPY _build/configs/constraints.txt /etc/pip-constraints.txt
+    - ARG PIP_CONSTRAINT=/etc/pip-constraints.txt
   prepend_galaxy:
     - COPY _build/configs/ansible.cfg /etc/ansible/ansible.cfg
+  prepend_builder:
+    - ARG PIP_CONSTRAINT=/etc/pip-constraints.txt
+  prepend_final:
+    - ARG PIP_CONSTRAINT=/etc/pip-constraints.txt
   append_final:
     - COPY _build/configs/ansible.cfg /etc/ansible/ansible.cfg
+    - COPY _build/callback/jdc_opentelemetry.py /usr/share/ansible/plugins/callback/jdc_opentelemetry.py
     # OpenTelemetry defaults; every one of these can be overridden at run time
     # (podman -e, ansible-navigator --senv, AAP/AWX job template env).
-    - ENV ANSIBLE_OPENTELEMETRY_ENABLED=true
+    # Tracing switches on when OTEL_EXPORTER_OTLP_ENDPOINT is set.
     - ENV OTEL_SERVICE_NAME=ansible
-    - ENV OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
     - ENV OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=grpc
-    - ENV OTEL_EXPORTER_OTLP_INSECURE=true
     - ENV OTEL_EXPORTER_OTLP_TIMEOUT=5
+    # Privacy: keep task arguments and task results (incl. facts) out of traces
+    - ENV ANSIBLE_OPENTELEMETRY_HIDE_TASK_ARGUMENTS=true
+    - ENV ANSIBLE_OPENTELEMETRY_DISABLE_LOGS=true
+    - ARG IMAGE_VERSION=dev
+    - ARG IMAGE_REVISION=unknown
+    - ARG IMAGE_CREATED=unknown
     - LABEL org.opencontainers.image.title="jdc-execution-engine"
     - LABEL org.opencontainers.image.description="Ansible Execution Environment with OpenTelemetry tracing"
     - LABEL org.opencontainers.image.source="https://github.com/jvzantvoort/jdc-execution-engine"
     - LABEL org.opencontainers.image.licenses="MIT"
+    - LABEL org.opencontainers.image.version="${IMAGE_VERSION}"
+    - LABEL org.opencontainers.image.revision="${IMAGE_REVISION}"
+    - LABEL org.opencontainers.image.created="${IMAGE_CREATED}"
     - RUN ansible --version && ansible-galaxy collection list community.general
     - RUN python3.12 -c "import opentelemetry.sdk, opentelemetry.exporter.otlp.proto.grpc.trace_exporter, opentelemetry.exporter.otlp.proto.http.trace_exporter"
-    - RUN ansible-doc -t callback community.general.opentelemetry > /dev/null
+    - RUN ansible-doc -t callback jdc_opentelemetry > /dev/null

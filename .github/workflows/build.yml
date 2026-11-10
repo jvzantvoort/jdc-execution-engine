@@ -11,18 +11,23 @@ on:
     - cron: "0 4 * * 1"   # weekly rebuild for base-image security updates
 
 permissions:
-  contents: read
-  packages: write
+  contents: write         # upload the SBOM to releases
+  packages: write         # push to ghcr.io
+  id-token: write         # keyless cosign signing (Sigstore OIDC)
+  security-events: write  # upload Trivy SARIF to code scanning
 
 env:
   REGISTRY: ghcr.io/${{ github.repository_owner }}
   IMAGE: jdc-execution-engine
+  TAG: ${{ github.sha }}
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # tags, for the image version label
 
       - uses: actions/setup-python@v6
         with:
@@ -32,19 +37,65 @@ jobs:
         run: pip install "ansible-builder>=3.1,<4"
 
       - name: Build
-        run: make build ENGINE=podman REGISTRY=$REGISTRY TAG=${{ github.sha }}
+        run: make build REGISTRY=$REGISTRY TAG=$TAG
+
+      - name: Labels
+        run: make inspect REGISTRY=$REGISTRY TAG=$TAG | grep org.opencontainers
 
       - name: Smoke test (playbook + OpenTelemetry spans)
-        run: make test ENGINE=podman REGISTRY=$REGISTRY TAG=${{ github.sha }}
+        run: make test REGISTRY=$REGISTRY TAG=$TAG
+
+      - name: Vulnerability report
+        run: make sarif REGISTRY=$REGISTRY TAG=$TAG
+
+      - name: Upload vulnerability report to code scanning
+        if: always() && hashFiles('build/trivy.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: build/trivy.sarif
+          category: trivy-image
+
+      - name: Vulnerability gate (fixable CRITICAL)
+        run: make scan REGISTRY=$REGISTRY TAG=$TAG
+
+      - name: SBOM
+        run: make sbom REGISTRY=$REGISTRY TAG=$TAG
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sbom
+          path: build/sbom.cdx.json
 
       - name: Push
         if: github.event_name != 'pull_request'
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
-          tags="${{ github.sha }}"
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then tags="$tags latest"; fi
-          if [ "${{ github.ref_type }}" = "tag" ]; then tags="$tags ${GITHUB_REF_NAME#v}"; fi
-          for t in $tags; do
-            podman tag "$REGISTRY/$IMAGE:${{ github.sha }}" "$REGISTRY/$IMAGE:$t"
+          make push REGISTRY=$REGISTRY TAG=$TAG
+          extra=""
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then extra="latest"; fi
+          if [ "${{ github.ref_type }}" = "tag" ]; then extra="${GITHUB_REF_NAME#v}"; fi
+          for t in $extra; do
+            podman tag "$REGISTRY/$IMAGE:$TAG" "$REGISTRY/$IMAGE:$t"
             podman push "$REGISTRY/$IMAGE:$t"
           done
+          echo "IMAGE_REF=$REGISTRY/$IMAGE@$(cat build/digest)" >> "$GITHUB_ENV"
+
+      - uses: sigstore/cosign-installer@v4.1.3
+        if: github.event_name != 'pull_request'
+
+      - name: Sign image and attest SBOM
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | cosign login ghcr.io -u "${{ github.actor }}" --password-stdin
+          cosign sign --yes "$IMAGE_REF"
+          cosign attest --yes --type cyclonedx --predicate build/sbom.cdx.json "$IMAGE_REF"
+          echo "Signed $IMAGE_REF" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attach SBOM to release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp build/sbom.cdx.json "build/${IMAGE}-${GITHUB_REF_NAME#v}.sbom.cdx.json"
+          gh release upload "$GITHUB_REF_NAME" "build/${IMAGE}-${GITHUB_REF_NAME#v}.sbom.cdx.json" --clobber \
+            || echo "::warning::no release for $GITHUB_REF_NAME yet; SBOM is in the workflow artifacts"
