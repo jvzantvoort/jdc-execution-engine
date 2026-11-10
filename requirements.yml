@@ -1,0 +1,9 @@
+---
+# Ansible collections installed into the EE
+collections:
+  - name: ansible.posix
+  - name: ansible.utils
+  - name: community.crypto
+  # >= 9.0.0 for store_spans_in_file and the http/protobuf traces protocol
+  - name: community.general
+    version: ">=9.0.0"

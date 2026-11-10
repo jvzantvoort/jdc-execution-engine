@@ -1,0 +1,50 @@
+---
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1"   # weekly rebuild for base-image security updates
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+  IMAGE: jdc-execution-engine
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ansible-builder
+        run: pip install "ansible-builder>=3.1,<4"
+
+      - name: Build
+        run: make build ENGINE=podman REGISTRY=$REGISTRY TAG=${{ github.sha }}
+
+      - name: Smoke test (playbook + OpenTelemetry spans)
+        run: make test ENGINE=podman REGISTRY=$REGISTRY TAG=${{ github.sha }}
+
+      - name: Push
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          tags="${{ github.sha }}"
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then tags="$tags latest"; fi
+          if [ "${{ github.ref_type }}" = "tag" ]; then tags="$tags ${GITHUB_REF_NAME#v}"; fi
+          for t in $tags; do
+            podman tag "$REGISTRY/$IMAGE:${{ github.sha }}" "$REGISTRY/$IMAGE:$t"
+            podman push "$REGISTRY/$IMAGE:$t"
+          done

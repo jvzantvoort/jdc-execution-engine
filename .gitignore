@@ -1,0 +1,7 @@
+# ansible-builder build context
+context/
+# ansible-navigator
+*-artifact-*.json
+ansible-navigator.log
+# smoke-test output
+tests/output/

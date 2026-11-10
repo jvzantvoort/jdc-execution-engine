@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""Verify that the opentelemetry callback wrote spans for tests/test.yml."""
+import json
+import sys
+
+EXPECTED = {
+    "Show Python and Ansible versions",
+    "Use a filter from community.general (needs jmespath)",
+    "Use a filter from ansible.utils (needs netaddr)",
+}
+
+
+def main(path):
+    with open(path, encoding="utf-8") as fh:
+        spans = json.load(fh)["spans"]
+
+    names = {span.get("name") for span in spans}
+    trace_ids = {span.get("context", {}).get("trace_id") for span in spans}
+    print(f"{len(spans)} spans in {len(trace_ids)} trace(s):")
+    for name in sorted(n for n in names if n):
+        print(f"  - {name}")
+
+    missing = EXPECTED - names
+    if missing:
+        print(f"FAIL: missing spans: {sorted(missing)}", file=sys.stderr)
+        return 1
+    if len(trace_ids) != 1:
+        print("FAIL: expected all spans in a single trace", file=sys.stderr)
+        return 1
+    print("OK: OpenTelemetry spans recorded")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1] if len(sys.argv) > 1 else "/tmp/spans.json"))

@@ -1,0 +1,8 @@
+# Python packages installed into the EE (in addition to collection deps)
+jmespath
+netaddr
+# OpenTelemetry: needed by the community.general.opentelemetry callback
+opentelemetry-api
+opentelemetry-sdk
+# meta-package: pulls in both the gRPC and the HTTP/protobuf OTLP exporters
+opentelemetry-exporter-otlp

@@ -1,0 +1,20 @@
+---
+# Run playbooks locally inside the freshly built EE:
+#   ansible-navigator run tests/test.yml
+# Traces go to OTEL_EXPORTER_OTLP_ENDPOINT; override it here or with --senv.
+ansible-navigator:
+  execution-environment:
+    container-engine: podman
+    enabled: true
+    image: localhost/jdc-execution-engine:latest
+    pull:
+      policy: never
+    environment-variables:
+      pass:
+        - TRACEPARENT
+      set:
+        OTEL_EXPORTER_OTLP_ENDPOINT: http://host.containers.internal:4317
+        OTEL_SERVICE_NAME: ansible-navigator
+  mode: stdout
+  playbook-artifact:
+    enable: false

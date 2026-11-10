@@ -1,0 +1,6 @@
+# System packages installed into the EE (bindep format)
+git-core [platform:rpm]
+openssh-clients [platform:rpm]
+rsync [platform:rpm]
+sudo [platform:rpm]
+which [platform:rpm]

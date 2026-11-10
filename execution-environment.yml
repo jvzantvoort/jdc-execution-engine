@@ -1,0 +1,55 @@
+---
+# Ansible Execution Environment with OpenTelemetry tracing enabled
+# (ansible-builder schema v3). Build with: make build
+version: 3
+
+build_arg_defaults:
+  ANSIBLE_GALAXY_CLI_COLLECTION_OPTS: "--pre"
+
+images:
+  base_image:
+    name: registry.access.redhat.com/ubi9/ubi:latest
+
+dependencies:
+  python_interpreter:
+    package_system: python3.12
+    python_path: /usr/bin/python3.12
+  ansible_core:
+    package_pip: ansible-core>=2.18,<2.21
+  ansible_runner:
+    package_pip: ansible-runner
+  galaxy: requirements.yml
+  python: requirements.txt
+  system: bindep.txt
+
+options:
+  package_manager_path: /usr/bin/dnf
+  tags:
+    - jdc-execution-engine:latest
+
+additional_build_files:
+  - src: files/ansible.cfg
+    dest: configs
+
+additional_build_steps:
+  prepend_base:
+    - RUN $PKGMGR -y upgrade && $PKGMGR clean all
+  prepend_galaxy:
+    - COPY _build/configs/ansible.cfg /etc/ansible/ansible.cfg
+  append_final:
+    - COPY _build/configs/ansible.cfg /etc/ansible/ansible.cfg
+    # OpenTelemetry defaults; every one of these can be overridden at run time
+    # (podman -e, ansible-navigator --senv, AAP/AWX job template env).
+    - ENV ANSIBLE_OPENTELEMETRY_ENABLED=true
+    - ENV OTEL_SERVICE_NAME=ansible
+    - ENV OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+    - ENV OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=grpc
+    - ENV OTEL_EXPORTER_OTLP_INSECURE=true
+    - ENV OTEL_EXPORTER_OTLP_TIMEOUT=5
+    - LABEL org.opencontainers.image.title="jdc-execution-engine"
+    - LABEL org.opencontainers.image.description="Ansible Execution Environment with OpenTelemetry tracing"
+    - LABEL org.opencontainers.image.source="https://github.com/jvzantvoort/jdc-execution-engine"
+    - LABEL org.opencontainers.image.licenses="MIT"
+    - RUN ansible --version && ansible-galaxy collection list community.general
+    - RUN python3.12 -c "import opentelemetry.sdk, opentelemetry.exporter.otlp.proto.grpc.trace_exporter, opentelemetry.exporter.otlp.proto.http.trace_exporter"
+    - RUN ansible-doc -t callback community.general.opentelemetry > /dev/null

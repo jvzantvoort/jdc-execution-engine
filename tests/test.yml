@@ -1,0 +1,26 @@
+---
+- name: Smoke test the execution environment
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  tasks:
+    - name: Show Python and Ansible versions
+      ansible.builtin.debug:
+        msg: "Python {{ ansible_facts.python_version }} / Ansible {{ ansible_version.full }}"
+
+    - name: Use a filter from community.general (needs jmespath)
+      ansible.builtin.assert:
+        that:
+          - (data | community.general.json_query('[].name')) == ['a', 'b']
+      vars:
+        data: [{name: a}, {name: b}]
+
+    - name: Use a filter from ansible.utils (needs netaddr)
+      ansible.builtin.assert:
+        that:
+          - "'192.168.1.10' is ansible.utils.ipv4_address"
+
+    - name: Check that the OpenTelemetry callback is enabled
+      ansible.builtin.assert:
+        that:
+          - "'community.general.opentelemetry' in lookup('ansible.builtin.config', 'CALLBACKS_ENABLED')"
