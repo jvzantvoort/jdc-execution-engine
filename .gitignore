@@ -5,3 +5,5 @@ build/
 # ansible-navigator
 *-artifact-*.json
 ansible-navigator.log
+# ansible-lint cache
+.ansible/

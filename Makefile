@@ -11,6 +11,7 @@ REVISION   ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 CREATED    ?= $(shell git log -1 --format=%cI 2>/dev/null || echo unknown)
 
 TRIVY      ?= ghcr.io/aquasecurity/trivy:0.76.2
+OTELCOL    ?= docker.io/otel/opentelemetry-collector-contrib:0.165.0
 OUT        := $(CURDIR)/build
 TRIVY_RUN   = mkdir -p $(OUT) && rm -f $(OUT)/image.tar && $(ENGINE) save -q -o $(OUT)/image.tar $(FULL_IMAGE) && \
 	$(ENGINE) run --rm -v $(OUT):/work:Z -v trivy-cache:/root/.cache $(TRIVY) image --input /work/image.tar
@@ -21,7 +22,7 @@ BUILDER     = ansible-builder build --file execution-environment.yml --context c
 	--build-arg IMAGE_CREATED=$(CREATED)
 RUN_TEST    = $(ENGINE) run --rm -v $(CURDIR)/tests:/runner/project:ro,Z
 
-.PHONY: all help create build test inspect lock scan sarif sbom push otel-up otel-down demo clean
+.PHONY: all help create build test e2e lint inspect lock scan sarif sbom push otel-up otel-down demo clean
 
 all: build
 
@@ -45,6 +46,13 @@ test: ## Smoke tests: playbook works, spans are produced, tracing is silent when
 		cat /tmp/out; [ $$rc -eq 0 ] || exit $$rc; \
 		if grep -qiE "opentelemetry|export|traces" /tmp/out; then echo "FAIL: tracing output without endpoint"; exit 1; fi; \
 		echo "OK: tracing silent without endpoint"'
+
+e2e: ## End-to-end: export to a real Collector over gRPC and HTTP, with TRACEPARENT
+	ENGINE=$(ENGINE) tests/e2e.sh $(FULL_IMAGE) $(OTELCOL)
+
+lint: ## yamllint + ansible-lint
+	yamllint .
+	ansible-lint
 
 inspect: ## Show labels, installed collections and python packages
 	$(ENGINE) image inspect $(FULL_IMAGE) --format '{{range $$k, $$v := .Labels}}{{$$k}}={{$$v}}{{"\n"}}{{end}}'

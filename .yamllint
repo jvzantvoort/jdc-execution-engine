@@ -1,0 +1,24 @@
+---
+extends: default
+
+ignore: |
+  context/
+  build/
+  .ansible/
+
+rules:
+  # digests, URLs and shell one-liners
+  line-length:
+    max: 160
+  # `on:` in GitHub workflows
+  truthy:
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1
+  # yamllint/ansible-lint compatibility
+  comments-indentation: false
+  braces:
+    max-spaces-inside: 1
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true

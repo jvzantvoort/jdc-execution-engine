@@ -33,6 +33,8 @@ podman pull ghcr.io/jvzantvoort/jdc-execution-engine:1.1.0
 ```bash
 make build         # build localhost/jdc-execution-engine:latest
 make test          # smoke tests (spans produced; silent when unconfigured)
+make e2e           # export to a real Collector over gRPC and HTTP
+make lint          # yamllint + ansible-lint
 
 make otel-up       # local OTel Collector + Jaeger (podman compose)
 make demo          # run tests/test.yml, exporting to the collector
@@ -87,6 +89,34 @@ debugging, but they can contain facts and secrets) set
 `ANSIBLE_OPENTELEMETRY_DISABLE_LOGS=false`; tasks with `no_log: true` stay
 censored.
 
+### Linking runs to a parent trace (`TRACEPARENT`)
+
+If whatever starts Ansible is traced too, pass its
+[W3C trace context](https://www.w3.org/TR/trace-context/) in `TRACEPARENT`. The
+playbook's root span then becomes a child of that span, so the Ansible tasks
+show up inside the caller's trace instead of as a separate trace.
+
+From a CI pipeline, [otel-cli](https://github.com/equinix-labs/otel-cli) can
+open the parent span and hand `TRACEPARENT` to the command it runs:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://collector.example.com:4317
+otel-cli exec --service ci --name "deploy ${CI_COMMIT_SHORT_SHA:-local}" -- \
+  podman run --rm -e TRACEPARENT -e OTEL_EXPORTER_OTLP_ENDPOINT \
+    -v "$PWD:/runner/project:Z" \
+    ghcr.io/jvzantvoort/jdc-execution-engine:1.1.0 \
+    ansible-playbook /runner/project/site.yml
+```
+
+`-e TRACEPARENT` with no value passes the variable through from the calling
+shell. The format is `00-<32 hex trace id>-<16 hex span id>-01`. `make e2e`
+checks that the root span is parented this way.
+
+**AWX:** environment variables are set globally or through credentials, not per
+launch, so AWX can't pass a different `TRACEPARENT` to each job. Each AWX job
+is its own trace; to find a job's trace, filter on service name and time, or
+set `OTEL_SERVICE_NAME` per credential to tell environments apart.
+
 ### ansible-navigator
 
 `ansible-navigator.yml` runs playbooks in the local image and exports to a
@@ -132,7 +162,7 @@ Everything that can be pinned is pinned:
 
 [Renovate](https://docs.renovatebot.com/) (`renovate.json`) opens weekly PRs
 for the base image digest, locked Python packages, collections, the Trivy
-scanner and GitHub Actions. To re-resolve all Python dependencies at once:
+scanner, the test Collector and GitHub Actions. To re-resolve all Python dependencies at once:
 
 ```bash
 make lock   # builds without the lock, rewrites files/constraints.txt
@@ -140,6 +170,17 @@ make lock   # builds without the lock, rewrites files/constraints.txt
 
 System packages (dnf) are not locked: the build runs `dnf upgrade`, and the
 weekly CI rebuild picks up base-image security fixes.
+
+## Tests and linting
+
+```bash
+make lint   # yamllint + ansible-lint (production profile)
+make test   # playbook runs; spans produced without args/results; silent without endpoint
+make e2e    # real Collector: OTLP over gRPC and HTTP, TRACEPARENT parenting
+```
+
+CI runs all three; the build job only starts when lint passes. The e2e
+Collector log is kept as a workflow artifact when the test fails.
 
 ## Security scanning
 
@@ -167,18 +208,23 @@ CI runs all three on every build. Findings show up under the repo's
 ├── tests/
 │   ├── test.yml               # Smoke-test playbook
 │   ├── ansible.cfg            # Simulated project config
+│   ├── e2e.sh                 # End-to-end export test
+│   ├── e2e-collector.yaml     # Collector config for the e2e test
 │   └── verify_spans.py        # Asserts a trace was produced without args/results
 ├── otel/                      # Local Collector + Jaeger (podman/docker compose)
 ├── renovate.json
+├── .yamllint, .ansible-lint
 ├── ansible-navigator.yml
 ├── Makefile
-└── .github/workflows/build.yml  # Build, test, scan, push, sign
+└── .github/workflows/build.yml  # Lint, build, test, e2e, scan, push, sign
 ```
 
 ## CI
 
-GitHub Actions builds, tests and scans every push and PR, then pushes to
-`ghcr.io/<owner>/jdc-execution-engine` and signs the image:
+GitHub Actions lints, builds, tests and scans every push and PR, then pushes
+to `ghcr.io/<owner>/jdc-execution-engine` and signs the image. It runs on
+`ubuntu-24.04`, and every action is pinned to a commit hash (Renovate keeps
+the hashes current):
 
 - `main` → `:latest` and `:<sha>`
 - tag `v1.2.3` → `:1.2.3` and `:<sha>`, SBOM attached to the release

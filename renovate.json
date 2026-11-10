@@ -1,15 +1,24 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
-  "schedule": ["before 6am on monday"],
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "schedule": [
+    "before 6am on monday"
+  ],
   "pip_requirements": {
-    "managerFilePatterns": ["/(^|/)files/constraints\\.txt$/"]
+    "managerFilePatterns": [
+      "/(^|/)files/constraints\\.txt$/"
+    ]
   },
   "customManagers": [
     {
       "customType": "regex",
       "description": "EE base image (tag + digest) in execution-environment.yml",
-      "managerFilePatterns": ["/^execution-environment\\.yml$/"],
+      "managerFilePatterns": [
+        "/^execution-environment\\.yml$/"
+      ],
       "matchStrings": [
         "name:\\s*(?<depName>[^:\\s]+):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
       ],
@@ -17,35 +26,57 @@
     },
     {
       "customType": "regex",
-      "description": "Trivy scanner image in the Makefile",
-      "managerFilePatterns": ["/^Makefile$/"],
-      "matchStrings": ["TRIVY\\s*\\?=\\s*(?<depName>[^:\\s]+):(?<currentValue>\\S+)"],
+      "description": "Trivy and Collector images in the Makefile",
+      "managerFilePatterns": [
+        "/^Makefile$/"
+      ],
+      "matchStrings": [
+        "(?:TRIVY|OTELCOL)\\s*\\?=\\s*(?<depName>[^:\\s]+):(?<currentValue>\\S+)"
+      ],
       "datasourceTemplate": "docker"
     }
   ],
   "packageRules": [
     {
       "description": "One weekly PR for all locked Python packages that aren't major updates",
-      "matchManagers": ["pip_requirements"],
-      "matchUpdateTypes": ["minor", "patch"],
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
       "groupName": "python lock"
     },
     {
       "description": "Keep OpenTelemetry packages in step, including majors",
-      "matchManagers": ["pip_requirements"],
-      "matchPackageNames": ["/^opentelemetry-/"],
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "matchPackageNames": [
+        "/^opentelemetry-/"
+      ],
       "groupName": "opentelemetry"
     },
     {
       "description": "ansible-core must stay within the range in execution-environment.yml",
-      "matchManagers": ["pip_requirements"],
-      "matchPackageNames": ["ansible-core"],
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "matchPackageNames": [
+        "ansible-core"
+      ],
       "allowedVersions": "<2.21"
     },
     {
       "description": "Collections: one PR for minor/patch bumps",
-      "matchManagers": ["ansible-galaxy"],
-      "matchUpdateTypes": ["minor", "patch"],
+      "matchManagers": [
+        "ansible-galaxy"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
       "groupName": "ansible collections"
     }
   ]

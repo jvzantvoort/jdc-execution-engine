@@ -6,7 +6,7 @@
 name: jdc-otel
 services:
   otel-collector:
-    image: docker.io/otel/opentelemetry-collector-contrib:0.111.0
+    image: docker.io/otel/opentelemetry-collector-contrib:0.165.0
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
       - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro,Z
