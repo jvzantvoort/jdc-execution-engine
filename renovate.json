@@ -78,6 +78,23 @@
         "patch"
       ],
       "groupName": "ansible collections"
+    },
+    {
+      "description": "UBI: follow plain X.Y tags only, not the X.Y-<build> variants of the same image",
+      "matchDepNames": [
+        "registry.access.redhat.com/ubi9/ubi"
+      ],
+      "versioning": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)$"
+    },
+    {
+      "description": "CI tooling runs on the same Python as the image (3.12)",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchDepNames": [
+        "python"
+      ],
+      "allowedVersions": "<3.13"
     }
   ]
 }

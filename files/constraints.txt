@@ -1,5 +1,6 @@
 # Pip constraints (lock file) applied to every pip install in the image build.
 # Regenerate with `make lock`; Renovate keeps it up to date between relocks.
+# dumb-init is left out: ansible-builder installs its own fixed version.
 ansible-core==2.20.11
 ansible-runner==2.4.3
 attrs==26.1.0
@@ -7,7 +8,6 @@ certifi==2026.10.23
 cffi==2.1.1
 charset-normalizer==3.5.2
 cryptography==50.0.2
-dumb-init==1.2.5
 googleapis-common-protos==1.76.0
 grpcio==1.85.1
 idna==3.20

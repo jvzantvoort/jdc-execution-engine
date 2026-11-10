@@ -69,7 +69,8 @@ inspect: ## Show labels, installed collections and python packages
 lock: ## Re-resolve Python dependencies and rewrite files/constraints.txt
 	$(BUILDER) --tag localhost/$(IMAGE):lock --build-arg PIP_CONSTRAINT=
 	{ grep '^#' files/constraints.txt; \
-	  $(ENGINE) run --rm localhost/$(IMAGE):lock python3.12 -m pip freeze; } > files/constraints.txt.new
+	  $(ENGINE) run --rm localhost/$(IMAGE):lock python3.12 -m pip freeze | grep -v '^dumb-init=='; \
+	} > files/constraints.txt.new
 	mv files/constraints.txt.new files/constraints.txt
 	-$(ENGINE) rmi localhost/$(IMAGE):lock
 	git diff --stat files/constraints.txt
