@@ -25,7 +25,7 @@ callback plugin.
 | OpenTelemetry  | SDK 1.45.2, OTLP exporters (gRPC + HTTP/protobuf)      |
 
 ```bash
-podman pull ghcr.io/jvzantvoort/jdc-execution-engine:1.2.0
+podman pull ghcr.io/jvzantvoort/jdc-execution-engine:1.2.1
 ```
 
 ## Quick start
@@ -51,7 +51,7 @@ podman run --rm \
   -e OTEL_EXPORTER_OTLP_ENDPOINT=http://collector.example.com:4317 \
   -e OTEL_SERVICE_NAME=ansible-prod \
   -e OTEL_RESOURCE_ATTRIBUTES=deployment.environment=prod \
-  ghcr.io/jvzantvoort/jdc-execution-engine:1.2.0 ansible-playbook site.yml
+  ghcr.io/jvzantvoort/jdc-execution-engine:1.2.1 ansible-playbook site.yml
 ```
 
 The image ships a small wrapper callback, `jdc_opentelemetry`, that loads
@@ -106,7 +106,7 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://collector.example.com:4317
 otel-cli exec --service ci --name "deploy ${CI_COMMIT_SHORT_SHA:-local}" -- \
   podman run --rm -e TRACEPARENT -e OTEL_EXPORTER_OTLP_ENDPOINT \
     -v "$PWD:/runner/project:Z" \
-    ghcr.io/jvzantvoort/jdc-execution-engine:1.2.0 \
+    ghcr.io/jvzantvoort/jdc-execution-engine:1.2.1 \
     ansible-playbook /runner/project/site.yml
 ```
 
@@ -153,8 +153,8 @@ Images pushed from CI are signed with [cosign](https://github.com/sigstore/cosig
 (keyless, GitHub OIDC) and carry a signed CycloneDX SBOM attestation:
 
 ```bash
-IMG=ghcr.io/jvzantvoort/jdc-execution-engine:1.2.0
-ID='https://github.com/jvzantvoort/jdc-execution-engine/.github/workflows/build.yml@refs/tags/v1.2.0'
+IMG=ghcr.io/jvzantvoort/jdc-execution-engine:1.2.1
+ID='https://github.com/jvzantvoort/jdc-execution-engine/.github/workflows/build.yml@refs/tags/v1.2.1'
 ISSUER=https://token.actions.githubusercontent.com
 
 cosign verify --certificate-identity "$ID" --certificate-oidc-issuer "$ISSUER" "$IMG"
