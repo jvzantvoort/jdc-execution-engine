@@ -1,5 +1,7 @@
 # jdc-execution-engine
 
+[![Image](https://img.shields.io/github/v/release/jvzantvoort/jdc-execution-engine?label=ghcr.io%2Fjvzantvoort%2Fjdc-execution-engine&logo=docker&logoColor=white)](https://github.com/jvzantvoort/jdc-execution-engine/pkgs/container/jdc-execution-engine)
+
 Ansible Execution Environment (EE) with **OpenTelemetry tracing enabled**.
 Every playbook run produces a distributed trace — one span per task per host —
 exported over OTLP to any OpenTelemetry Collector, Jaeger, Tempo, Elastic APM,
