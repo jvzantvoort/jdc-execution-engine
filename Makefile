@@ -41,6 +41,13 @@ test: ## Smoke tests: playbook works, spans are produced, tracing is silent when
 		-e ANSIBLE_OPENTELEMETRY_STORE_SPANS_IN_FILE=/tmp/spans.json \
 		$(FULL_IMAGE) sh -c 'ansible-playbook /runner/project/test.yml && \
 			python3.12 /runner/project/verify_spans.py /tmp/spans.json'
+	@echo "== AWX-style run: via ansible-runner (sets ANSIBLE_CALLBACK_PLUGINS), with AWX job env"
+	$(RUN_TEST) -e ANSIBLE_OPENTELEMETRY_STORE_SPANS_IN_FILE=/tmp/spans.json \
+		-e JOB_ID=4242 -e AWX_HOST=https://awx.example.com \
+		$(FULL_IMAGE) sh -c 'mkdir -p /tmp/pd/project && cp /runner/project/test.yml /tmp/pd/project/ && \
+			ansible-runner run /tmp/pd -p test.yml > /dev/null && \
+			python3.12 /runner/project/verify_spans.py /tmp/spans.json awx.job.id=4242 \
+				"awx.job.url=https://awx.example.com/#/jobs/playbook/4242/output"'
 	@echo "== no endpoint configured: tracing must be off and silent"
 	$(RUN_TEST) $(FULL_IMAGE) sh -c 'ansible-playbook /runner/project/test.yml > /tmp/out 2>&1; rc=$$?; \
 		cat /tmp/out; [ $$rc -eq 0 ] || exit $$rc; \

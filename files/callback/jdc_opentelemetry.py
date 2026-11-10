@@ -14,6 +14,8 @@ description:
     E(OTEL_EXPORTER_OTLP_TRACES_ENDPOINT) or O(store_spans_in_file) is set. Otherwise the plugin
     stays silent and adds no overhead.
   - Do not also enable C(community.general.opentelemetry), or every run is traced twice.
+  - Under AWX (E(JOB_ID) and E(AWX_HOST) set) the trace's resource gets C(awx.job.id) and
+    C(awx.job.url), so a job can be found from its trace and the other way round.
 options:
   enabled:
     type: str
@@ -103,12 +105,24 @@ requirements:
 """
 
 import os
+from urllib.parse import quote
 
 from ansible_collections.community.general.plugins.callback.opentelemetry import (
     CallbackModule as OpenTelemetryCallback,
 )
 
 ENDPOINT_VARS = ("OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
+
+
+def awx_resource_attributes():
+    """Resource attributes for an AWX job, from the env AWX sets for every job."""
+    job_id, host = os.environ.get("JOB_ID"), os.environ.get("AWX_HOST")
+    if not (job_id and host):
+        return {}
+    return {
+        "awx.job.id": job_id,
+        "awx.job.url": f"{host.rstrip('/')}/#/jobs/playbook/{job_id}/output",
+    }
 
 
 class CallbackModule(OpenTelemetryCallback):
@@ -130,3 +144,22 @@ class CallbackModule(OpenTelemetryCallback):
 
         self.disabled = True
         self._display.vvv(f"jdc_opentelemetry: tracing off (enabled={mode}, no OTLP endpoint set)")
+
+    def v2_playbook_on_stats(self, stats):
+        # The SDK builds the trace's Resource from OTEL_RESOURCE_ATTRIBUTES while
+        # the trace is exported here, at the end of the run. Add the AWX
+        # attributes for just that call; explicit user values come later in the
+        # list and win.
+        extra = awx_resource_attributes()
+        if not extra:
+            return super().v2_playbook_on_stats(stats)
+        saved = os.environ.get("OTEL_RESOURCE_ATTRIBUTES")
+        pairs = [f"{k}={quote(v, safe='')}" for k, v in extra.items()]
+        os.environ["OTEL_RESOURCE_ATTRIBUTES"] = ",".join(pairs + ([saved] if saved else []))
+        try:
+            return super().v2_playbook_on_stats(stats)
+        finally:
+            if saved is None:
+                os.environ.pop("OTEL_RESOURCE_ATTRIBUTES", None)
+            else:
+                os.environ["OTEL_RESOURCE_ATTRIBUTES"] = saved

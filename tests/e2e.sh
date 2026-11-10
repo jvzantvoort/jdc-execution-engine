@@ -39,6 +39,7 @@ for run in "grpc 4317 4bf92f3577b34da6a3ce929d0e0e4736" \
         -e OTEL_EXPORTER_OTLP_ENDPOINT="http://$COL:$2" \
         -e OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="$1" \
         -e TRACEPARENT="00-$3-00f067aa0ba902b7-01" \
+        -e JOB_ID=4242 -e AWX_HOST=https://awx.example.com \
         "$IMAGE" ansible-playbook /runner/project/test.yml >/dev/null
 done
 sleep 2   # let the collector's batch processor flush
@@ -54,9 +55,10 @@ for name in "test.yml" "Show Python and Ansible versions" \
             "Use a filter from ansible.utils (needs netaddr)"; do
     grep -q "Name *: $name\$" "$LOG" || { echo "missing span: $name"; fail=1; }
 done
+grep -q "awx.job.id: Str(4242)" "$LOG" || { echo "missing resource attribute awx.job.id"; fail=1; }
 grep -q "Parent ID *: 00f067aa0ba902b7" "$LOG" || { echo "root span not parented to TRACEPARENT"; fail=1; }
 
 if [ $fail -ne 0 ]; then
     echo "FAIL: see $LOG"; exit 1
 fi
-echo "OK: traces exported over gRPC and HTTP, attached to TRACEPARENT"
+echo "OK: traces exported over gRPC and HTTP, attached to TRACEPARENT, tagged with the AWX job"

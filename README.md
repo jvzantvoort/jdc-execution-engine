@@ -54,10 +54,12 @@ podman run --rm \
   ghcr.io/jvzantvoort/jdc-execution-engine:1.1.0 ansible-playbook site.yml
 ```
 
-The image ships a small wrapper callback, `jdc_opentelemetry`
-(`/usr/share/ansible/plugins/callback/`), that loads automatically. It needs no
-`callbacks_enabled` entry, so tracing also works when your project has its own
-`ansible.cfg`. Don't enable `community.general.opentelemetry` as well, or every
+The image ships a small wrapper callback, `jdc_opentelemetry`, that loads
+automatically. It needs no `callbacks_enabled` entry, so tracing also works
+when your project has its own `ansible.cfg`. It is installed in ansible-core's
+built-in callback directory because ansible-runner (and so AWX and
+ansible-navigator) overrides `ANSIBLE_CALLBACK_PLUGINS`, which hides plugins in
+the usual `/usr/share/ansible/plugins/callback`. Don't enable `community.general.opentelemetry` as well, or every
 run is traced twice.
 
 | Variable | Image default | Purpose |
@@ -114,8 +116,7 @@ checks that the root span is parented this way.
 
 **AWX:** environment variables are set globally or through credentials, not per
 launch, so AWX can't pass a different `TRACEPARENT` to each job. Each AWX job
-is its own trace; to find a job's trace, filter on service name and time, or
-set `OTEL_SERVICE_NAME` per credential to tell environments apart.
+is its own trace, tagged with its job ID (see below).
 
 ### ansible-navigator
 
@@ -132,6 +133,19 @@ ansible-navigator run site.yml --senv OTEL_EXPORTER_OTLP_ENDPOINT=http://collect
 Add the image as an Execution Environment and set the `OTEL_*` variables via
 *Settings → Job settings → Extra Environment Variables*, or via a custom
 credential type for the auth header.
+
+Every AWX job's trace carries these resource attributes, taken from the
+`JOB_ID` and `AWX_HOST` variables AWX sets for each job:
+
+| Attribute | Example |
+|-----------|---------|
+| `awx.job.id` | `4242` |
+| `awx.job.url` | `https://awx.example.com/#/jobs/playbook/4242/output` |
+
+Search for `awx.job.id=4242` in Jaeger (or `resource.awx.job.id = "4242"` in
+Tempo) to go from a job to its trace; `awx.job.url` links back. Values you set
+yourself in `OTEL_RESOURCE_ATTRIBUTES` take precedence. Outside AWX (no
+`JOB_ID`/`AWX_HOST`) nothing is added.
 
 ## Verifying the image
 
@@ -175,8 +189,8 @@ weekly CI rebuild picks up base-image security fixes.
 
 ```bash
 make lint   # yamllint + ansible-lint (production profile)
-make test   # playbook runs; spans produced without args/results; silent without endpoint
-make e2e    # real Collector: OTLP over gRPC and HTTP, TRACEPARENT parenting
+make test   # spans without args/results; AWX-style run via ansible-runner; silent without endpoint
+make e2e    # real Collector: OTLP over gRPC and HTTP, TRACEPARENT parenting, AWX job attributes
 ```
 
 CI runs all three; the build job only starts when lint passes. The e2e

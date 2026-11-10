@@ -50,7 +50,14 @@ additional_build_steps:
     - ARG PIP_CONSTRAINT=/etc/pip-constraints.txt
   append_final:
     - COPY _build/configs/ansible.cfg /etc/ansible/ansible.cfg
-    - COPY _build/callback/jdc_opentelemetry.py /usr/share/ansible/plugins/callback/jdc_opentelemetry.py
+    # Installed into ansible-core's own callback directory, which is always
+    # searched. ansible-runner (and so AWX) sets ANSIBLE_CALLBACK_PLUGINS for
+    # every job, which replaces the default search path; a plugin in
+    # /usr/share/ansible/plugins/callback would silently not load there.
+    - COPY _build/callback/jdc_opentelemetry.py /tmp/jdc_opentelemetry.py
+    - >-
+      RUN d="$($PYCMD -c 'import ansible, os; print(os.path.dirname(ansible.__file__))')/plugins/callback"
+      && install -m 0644 /tmp/jdc_opentelemetry.py "$d/jdc_opentelemetry.py" && rm /tmp/jdc_opentelemetry.py
     # OpenTelemetry defaults; every one of these can be overridden at run time
     # (podman -e, ansible-navigator --senv, AAP/AWX job template env).
     # Tracing switches on when OTEL_EXPORTER_OTLP_ENDPOINT is set.
