@@ -2,6 +2,7 @@
 
 [![build](https://github.com/jvzantvoort/jdc-execution-engine/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/jvzantvoort/jdc-execution-engine/actions/workflows/build.yml)
 [![Image](https://img.shields.io/github/v/release/jvzantvoort/jdc-execution-engine?label=ghcr.io%2Fjvzantvoort%2Fjdc-execution-engine&logo=docker&logoColor=white)](https://github.com/jvzantvoort/jdc-execution-engine/pkgs/container/jdc-execution-engine)
+[![License](https://img.shields.io/github/license/jvzantvoort/jdc-execution-engine)](LICENSE)
 
 Ansible Execution Environment (EE) with **OpenTelemetry tracing enabled**.
 Every playbook run produces a distributed trace — one span per task per host —
