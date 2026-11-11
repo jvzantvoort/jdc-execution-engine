@@ -19,3 +19,9 @@
       ansible.builtin.assert:
         that:
           - "'192.168.1.10' is ansible.utils.ipv4_address"
+
+    - name: Record the outbound trace context (JDC_TRACEPARENT)
+      ansible.builtin.copy:
+        content: "{{ lookup('env', 'JDC_TRACEPARENT') }}"
+        dest: "{{ jdc_traceparent_file | default('/tmp/jdc_traceparent') }}"
+        mode: "0644"

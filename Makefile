@@ -35,26 +35,32 @@ create: ## Generate the build context (Containerfile) only
 build: ## Build the EE image
 	$(BUILDER) --tag $(FULL_IMAGE)
 
-test: ## Smoke tests: playbook works, spans are produced, tracing is silent when unconfigured
+test: ## Smoke tests: spans produced, trace context propagation, silent when unconfigured
 	@echo "== tracing on (span file), with a project ansible.cfg that knows nothing about tracing"
 	$(RUN_TEST) -e ANSIBLE_CONFIG=/runner/project/ansible.cfg \
 		-e ANSIBLE_OPENTELEMETRY_STORE_SPANS_IN_FILE=/tmp/spans.json \
 		$(FULL_IMAGE) sh -c 'ansible-playbook /runner/project/test.yml && \
-			python3.12 /runner/project/verify_spans.py /tmp/spans.json'
+			python3.12 /runner/project/verify_spans.py /tmp/spans.json --no-parent --outbound /tmp/jdc_traceparent'
 	@echo "== AWX-style run: via ansible-runner (sets ANSIBLE_CALLBACK_PLUGINS), with AWX job env"
 	$(RUN_TEST) -e ANSIBLE_OPENTELEMETRY_STORE_SPANS_IN_FILE=/tmp/spans.json \
 		-e JOB_ID=4242 -e AWX_HOST=https://awx.example.com \
 		$(FULL_IMAGE) sh -c 'mkdir -p /tmp/pd/project && cp /runner/project/test.yml /tmp/pd/project/ && \
 			ansible-runner run /tmp/pd -p test.yml > /dev/null && \
 			python3.12 /runner/project/verify_spans.py /tmp/spans.json awx.job.id=4242 \
-				"awx.job.url=https://awx.example.com/#/jobs/playbook/4242/output"'
+				"awx.job.url=https://awx.example.com/#/jobs/playbook/4242/output" \
+				--outbound /tmp/jdc_traceparent --absent awx.workflow_job.id --absent flow.id'
+	@echo "== trace context propagation via ansible-runner: extra vars in, JDC_TRACEPARENT out"
+	$(RUN_TEST) $(FULL_IMAGE) sh /runner/project/propagation.sh
 	@echo "== no endpoint configured: tracing must be off and silent"
-	$(RUN_TEST) $(FULL_IMAGE) sh -c 'ansible-playbook /runner/project/test.yml > /tmp/out 2>&1; rc=$$?; \
+	@echo "   (an inherited JDC_TRACEPARENT must be cleared, so tasks never pass on a context nobody exports)"
+	$(RUN_TEST) -e JDC_TRACEPARENT=00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01 \
+		$(FULL_IMAGE) sh -c 'ansible-playbook /runner/project/test.yml > /tmp/out 2>&1; rc=$$?; \
 		cat /tmp/out; [ $$rc -eq 0 ] || exit $$rc; \
 		if grep -qiE "opentelemetry|export|traces" /tmp/out; then echo "FAIL: tracing output without endpoint"; exit 1; fi; \
+		if [ -s /tmp/jdc_traceparent ]; then echo "FAIL: JDC_TRACEPARENT set without tracing"; exit 1; fi; \
 		echo "OK: tracing silent without endpoint"'
 
-e2e: ## End-to-end: export to a real Collector over gRPC and HTTP, with TRACEPARENT
+e2e: ## End-to-end: export to a real Collector over gRPC and HTTP, TRACEPARENT and extra vars
 	ENGINE=$(ENGINE) tests/e2e.sh $(FULL_IMAGE) $(OTELCOL)
 
 lint: ## yamllint + ansible-lint
