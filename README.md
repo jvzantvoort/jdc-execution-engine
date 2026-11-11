@@ -71,10 +71,22 @@ run is traced twice.
 | `OTEL_SERVICE_NAME` | `ansible` | `service.name` of the trace |
 | `OTEL_EXPORTER_OTLP_HEADERS` | – | Auth headers, e.g. `authorization=Bearer <token>` |
 | `OTEL_RESOURCE_ATTRIBUTES` | – | Extra resource attributes |
-| `TRACEPARENT` | – | W3C trace context: attach the run to a parent trace (e.g. a CI pipeline) |
+| `TRACEPARENT` | – | W3C trace context: attach the run to a parent trace (e.g. a CI pipeline). The `traceparent` extra var takes precedence |
+| `ANSIBLE_OPENTELEMETRY_TRACEPARENT_VAR` | `traceparent` | Name of the extra var that carries the parent trace context |
 | `ANSIBLE_OPENTELEMETRY_HIDE_TASK_ARGUMENTS` | `true` | Keep task arguments out of spans |
 | `ANSIBLE_OPENTELEMETRY_DISABLE_LOGS` | `true` | Keep task results (incl. facts) out of spans |
 | `ANSIBLE_OPENTELEMETRY_STORE_SPANS_IN_FILE` | – | Write spans to a JSON file instead of exporting (also turns tracing on) |
+| `JDC_TRACEPARENT` | *set by the callback* | Trace context of the playbook's root span, for tasks to pass on (see [below](#passing-the-trace-on-jdc_traceparent)); unset when tracing is off |
+
+These extra vars are read at the start of the run (with `-e`, from
+ansible-runner's `env/extravars`, or from an AWX launch):
+
+| Extra var | Effect |
+|-----------|--------|
+| `traceparent` | Parent trace context, W3C format; wins over the `TRACEPARENT` env var. Invalid values are ignored with a warning |
+| `tracestate` | W3C `tracestate`, passed on together with `traceparent` |
+| `flow_id` | Your own correlation ID, added as resource attribute `flow.id` |
+| `awx_workflow_job_id`, `awx_workflow_job_name`, `awx_job_template_name`, `awx_job_launch_type` | Added as resource attributes (AWX sets these itself, see [AWX](#awx--ansible-automation-platform)) |
 
 `http://` endpoints use plain text, `https://` endpoints use TLS. Never bake
 credentials into the image; pass `OTEL_EXPORTER_OTLP_HEADERS` at run time
@@ -114,9 +126,108 @@ otel-cli exec --service ci --name "deploy ${CI_COMMIT_SHORT_SHA:-local}" -- \
 shell. The format is `00-<32 hex trace id>-<16 hex span id>-01`. `make e2e`
 checks that the root span is parented this way.
 
-**AWX:** environment variables are set globally or through credentials, not per
-launch, so AWX can't pass a different `TRACEPARENT` to each job. Each AWX job
-is its own trace, tagged with its job ID (see below).
+The same context can be passed as an extra var instead, which is what you need
+for AWX:
+
+```bash
+ansible-playbook site.yml -e traceparent="$TRACEPARENT" -e flow_id=CHG0042
+```
+
+An extra var `traceparent` wins over the `TRACEPARENT` env var. A value that
+isn't a valid W3C traceparent (`00-<32 hex>-<16 hex>-<2 hex>`, IDs not all
+zero) is ignored with a warning; the run never fails because of it. Use
+`ANSIBLE_OPENTELEMETRY_TRACEPARENT_VAR` if the name `traceparent` is taken in
+your playbooks.
+
+### Linking AWX jobs to the caller's trace
+
+AWX sets environment variables globally or through credentials, not per
+launch, so it can't hand each job a different `TRACEPARENT`. Extra vars *are*
+per launch, so the caller passes its trace context as the `traceparent` extra
+var. AWX discards extra vars a template doesn't accept, so on the job template
+or workflow job template either:
+
+- enable **Prompt on launch** for *Variables*, or
+- add a survey with a text field `traceparent` (not required), and `flow_id`
+  if you use it.
+
+Workflow extra vars reach every node of the workflow, so every job in it joins
+the caller's trace.
+
+Launch with `--monitor` (CLI) or `wait: true` (`awx.awx` modules). The caller
+then waits for the job, so its span covers the whole job: a job that is
+queued for long, hangs or fails shows up as a long or failed caller span,
+even when Ansible itself never exported anything (see
+[Limitations](#limitations)). Without it the caller's span ends a few
+milliseconds after the launch and tells you nothing.
+
+**Jenkins** (the [OpenTelemetry plugin](https://plugins.jenkins.io/opentelemetry/)
+sets `TRACEPARENT` in `sh` steps to the current step's span):
+
+```groovy
+stage('Deploy') {
+  steps {
+    withCredentials([string(credentialsId: 'awx-token', variable: 'CONTROLLER_OAUTH_TOKEN')]) {
+      sh '''
+        export CONTROLLER_HOST=https://awx.example.com
+        awx job_templates launch 42 --monitor \
+          --extra_vars "{traceparent: $TRACEPARENT, flow_id: $BUILD_TAG}"
+      '''
+    }
+  }
+}
+```
+
+Use `awx workflow_job_templates launch <id> --monitor ...` for a workflow.
+
+**Rundeck** has no built-in tracing; wrap the step in
+[otel-cli](https://github.com/equinix-labs/otel-cli), which opens a span and
+puts its `TRACEPARENT` in the environment of the command it runs:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://collector.example.com:4317
+otel-cli exec --service rundeck --name "deploy @job.name@" -- \
+  sh -c 'awx job_templates launch 42 --monitor \
+    --extra_vars "{traceparent: $TRACEPARENT, flow_id: rundeck-@job.execid@}"'
+```
+
+The single quotes matter: `$TRACEPARENT` must be expanded by the shell that
+otel-cli starts, not by the step's own shell.
+
+### Passing the trace on (`JDC_TRACEPARENT`)
+
+While tracing is on, the callback sets `JDC_TRACEPARENT` in the controller's
+environment to the trace context of the playbook's root span, before the first
+task runs. Tasks pass it to whatever they call next, so that system's spans
+join the same trace:
+
+```yaml
+- name: Call an API within this trace
+  ansible.builtin.uri:
+    url: https://api.example.com/deployments
+    method: POST
+    headers:
+      traceparent: "{{ lookup('env', 'JDC_TRACEPARENT') }}"
+    body_format: json
+    body: {app: web}
+
+- name: Run the next job template within this trace
+  awx.awx.job_launch:            # needs the awx.awx collection (not in this image)
+    name: deploy-db
+    extra_vars:
+      traceparent: "{{ lookup('env', 'JDC_TRACEPARENT') }}"
+      flow_id: "{{ flow_id | default('') }}"
+    wait: true                   # see --monitor above
+```
+
+When tracing is off `JDC_TRACEPARENT` is unset (the callback even clears an
+inherited one), the lookup returns an empty string, and an empty `traceparent`
+is ignored by this image and by standard OpenTelemetry propagators, so the same
+playbook works with and without tracing.
+
+Downstream spans become children of the playbook's root span, not of the task
+that made the call: task spans only get their IDs when the trace is built at
+the end of the run.
 
 ### ansible-navigator
 
@@ -142,10 +253,39 @@ Every AWX job's trace carries these resource attributes, taken from the
 | `awx.job.id` | `4242` |
 | `awx.job.url` | `https://awx.example.com/#/jobs/playbook/4242/output` |
 
+AWX also passes a set of `awx_*` extra vars to every job. These become
+resource attributes too, when present:
+
+| Attribute | From extra var | Example |
+|-----------|----------------|---------|
+| `awx.workflow_job.id` | `awx_workflow_job_id` | `4240` (only for jobs inside a workflow) |
+| `awx.workflow_job.name` | `awx_workflow_job_name` | `Release web` |
+| `awx.job_template.name` | `awx_job_template_name` | `deploy-web` |
+| `awx.job.launch_type` | `awx_job_launch_type` | `manual`, `workflow`, `scheduled`, ... |
+| `flow.id` | `flow_id` (yours, not AWX's) | `CHG0042` |
+
 Search for `awx.job.id=4242` in Jaeger (or `resource.awx.job.id = "4242"` in
-Tempo) to go from a job to its trace; `awx.job.url` links back. Values you set
-yourself in `OTEL_RESOURCE_ATTRIBUTES` take precedence. Outside AWX (no
-`JOB_ID`/`AWX_HOST`) nothing is added.
+Tempo) to go from a job to its trace; `awx.job.url` links back.
+`awx.workflow_job.id` finds every job of one workflow run, and `flow.id` finds
+everything that belongs to one business flow, across systems and traces.
+Values you set yourself in `OTEL_RESOURCE_ATTRIBUTES` take precedence. Outside
+AWX (no `JOB_ID`/`AWX_HOST`, no `awx_*` extra vars) nothing is added.
+
+### Limitations
+
+- **Spans are exported at the end of the run.** The upstream callback builds
+  the whole trace in `v2_playbook_on_stats`. A job that hangs, is cancelled
+  or is killed exports no spans at all. Launching with `--monitor` /
+  `wait: true` keeps the caller's span open for the job's duration, so the
+  stall is still visible from the caller's side.
+- **A workflow has no span of its own.** Each workflow node is a separate job
+  and becomes a separate child of the caller's span, so nodes appear as
+  siblings, not nested in a workflow span. Group them with
+  `awx.workflow_job.id`.
+- **Downstream systems must accept `traceparent`** (W3C Trace Context) to join
+  the trace. For systems that don't, pass `flow_id` and log it there, then
+  correlate on `flow.id`.
+- One trace per playbook run: the context is fixed when the first play starts.
 
 ## Verifying the image
 
@@ -189,8 +329,9 @@ weekly CI rebuild picks up base-image security fixes.
 
 ```bash
 make lint   # yamllint + ansible-lint (production profile)
-make test   # spans without args/results; AWX-style run via ansible-runner; silent without endpoint
-make e2e    # real Collector: OTLP over gRPC and HTTP, TRACEPARENT parenting, AWX job attributes
+make test   # spans without args/results; AWX-style runs via ansible-runner (extra-var traceparent,
+            # precedence, invalid values, JDC_TRACEPARENT, workflow attributes); silent without endpoint
+make e2e    # real Collector: OTLP over gRPC and HTTP, TRACEPARENT and extra-var parenting, AWX attributes
 ```
 
 CI runs all three; the build job only starts when lint passes. The e2e
@@ -223,8 +364,9 @@ CI runs all three on every build. Findings show up under the repo's
 │   ├── test.yml               # Smoke-test playbook
 │   ├── ansible.cfg            # Simulated project config
 │   ├── e2e.sh                 # End-to-end export test
+│   ├── propagation.sh         # Trace context in (extra vars) and out (JDC_TRACEPARENT)
 │   ├── e2e-collector.yaml     # Collector config for the e2e test
-│   └── verify_spans.py        # Asserts a trace was produced without args/results
+│   └── verify_spans.py        # Asserts a trace was produced without args/results, checks parenting
 ├── otel/                      # Local Collector + Jaeger (podman/docker compose)
 ├── renovate.json
 ├── .yamllint, .ansible-lint
