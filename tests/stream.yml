@@ -1,0 +1,15 @@
+---
+# A job that hangs: with ANSIBLE_OPENTELEMETRY_STREAM_SPANS=true the first
+# task's span must reach the collector while the job is still running.
+- name: Streaming test, a job that hangs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Quick task before the hang
+      ansible.builtin.debug:
+        msg: before the hang
+
+    - name: Hang
+      ansible.builtin.wait_for:
+        timeout: 300

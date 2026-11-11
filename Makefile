@@ -49,6 +49,10 @@ test: ## Smoke tests: spans produced, trace context propagation, silent when unc
 			python3.12 /runner/project/verify_spans.py /tmp/spans.json awx.job.id=4242 \
 				"awx.job.url=https://awx.example.com/#/jobs/playbook/4242/output" \
 				--outbound /tmp/jdc_traceparent --absent awx.workflow_job.id --absent flow.id'
+	@echo "== streaming task spans (span file): same trace, parented to the root span, nothing twice"
+	$(RUN_TEST) -e ANSIBLE_OPENTELEMETRY_STORE_SPANS_IN_FILE=/tmp/spans.json -e ANSIBLE_OPENTELEMETRY_STREAM_SPANS=true \
+		$(FULL_IMAGE) sh -c 'ansible-playbook /runner/project/test.yml > /dev/null && \
+			python3.12 /runner/project/verify_spans.py /tmp/spans.json --no-parent --outbound /tmp/jdc_traceparent'
 	@echo "== trace context propagation via ansible-runner: extra vars in, JDC_TRACEPARENT out"
 	$(RUN_TEST) $(FULL_IMAGE) sh /runner/project/propagation.sh
 	@echo "== no endpoint configured: tracing must be off and silent"
@@ -60,7 +64,7 @@ test: ## Smoke tests: spans produced, trace context propagation, silent when unc
 		if [ -s /tmp/jdc_traceparent ]; then echo "FAIL: JDC_TRACEPARENT set without tracing"; exit 1; fi; \
 		echo "OK: tracing silent without endpoint"'
 
-e2e: ## End-to-end: export to a real Collector over gRPC and HTTP, TRACEPARENT and extra vars
+e2e: ## End-to-end: export to a real Collector over gRPC and HTTP, TRACEPARENT, extra vars, streaming
 	ENGINE=$(ENGINE) tests/e2e.sh $(FULL_IMAGE) $(OTELCOL)
 
 lint: ## yamllint + ansible-lint

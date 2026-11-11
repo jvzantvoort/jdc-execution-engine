@@ -1,7 +1,8 @@
 #!/bin/sh
 # End-to-end test: export real OTLP traces (gRPC and HTTP) to a Collector and
 # check they arrive, with the run attached to a parent trace via TRACEPARENT
-# and, through ansible-runner, via the traceparent extra var.
+# and, through ansible-runner, via the traceparent extra var. With streaming on,
+# a hung job's finished tasks must reach the Collector while it still runs.
 # Usage: tests/e2e.sh <image> <collector-image>    (ENGINE=podman|docker)
 set -eu
 IMAGE=$1
@@ -10,10 +11,11 @@ ENGINE=${ENGINE:-podman}
 DIR=$(cd "$(dirname "$0")" && pwd)
 NET=jdc-e2e
 COL=jdc-e2e-collector
+HANG=jdc-e2e-hang
 LOG="$DIR/../build/e2e.log"
 
 cleanup() {
-    $ENGINE rm -f $COL >/dev/null 2>&1 || true
+    $ENGINE rm -f $COL $HANG >/dev/null 2>&1 || true
     $ENGINE network rm $NET >/dev/null 2>&1 || true
 }
 cleanup
@@ -53,6 +55,31 @@ $ENGINE run --rm --network $NET -v "$DIR:/runner/project:ro,Z" \
     -e EXTRAVARS="{traceparent: 00-$RUNNER_TRACE-$RUNNER_PARENT-01, flow_id: e2e-flow, awx_workflow_job_id: 77}" \
     "$IMAGE" sh -c 'mkdir -p /tmp/pd/project /tmp/pd/env && cp /runner/project/test.yml /tmp/pd/project/ &&
         printf "%s\n" "$EXTRAVARS" > /tmp/pd/env/extravars && ansible-runner run /tmp/pd -p test.yml' >/dev/null
+
+# Streaming, complete run: the same spans as without streaming, none twice
+STREAM_TRACE=8c1d3f5e7a9b2c4d6e8f0a1b3c5d7e9f
+echo "== grpc, streaming task spans (trace $STREAM_TRACE)"
+$ENGINE run --rm --network $NET -v "$DIR:/runner/project:ro,Z" \
+    -e OTEL_EXPORTER_OTLP_ENDPOINT="http://$COL:4317" -e ANSIBLE_OPENTELEMETRY_STREAM_SPANS=true \
+    -e TRACEPARENT="00-$STREAM_TRACE-00f067aa0ba902b7-01" \
+    "$IMAGE" ansible-playbook /runner/project/test.yml >/dev/null
+
+# Streaming, hung job: the finished task's span arrives while the job still runs
+HANG_TRACE=9d2e4f6a8b0c1d3e5f7a9b0c2d4e6f8a
+echo "== grpc, streaming, job hangs (trace $HANG_TRACE), killed once its first span arrived"
+$ENGINE run -d --name $HANG --network $NET -v "$DIR:/runner/project:ro,Z" \
+    -e OTEL_EXPORTER_OTLP_ENDPOINT="http://$COL:4317" -e ANSIBLE_OPENTELEMETRY_STREAM_SPANS=true \
+    -e TRACEPARENT="00-$HANG_TRACE-00f067aa0ba902b7-01" \
+    "$IMAGE" ansible-playbook /runner/project/stream.yml >/dev/null
+i=0
+until $ENGINE logs $COL 2>&1 | grep -q "Trace ID *: $HANG_TRACE"; do
+    i=$((i + 1))
+    if [ $i -gt 30 ]; then $ENGINE logs $HANG; echo "no span from the hung job within 30s"; fail=1; break; fi
+    sleep 1
+done
+[ "$($ENGINE inspect -f '{{.State.Running}}' $HANG)" = true ] || { $ENGINE logs $HANG; echo "hung job ended early"; fail=1; }
+$ENGINE kill -s KILL $HANG >/dev/null
+
 sleep 2   # let the collector's batch processor flush
 
 mkdir -p "$(dirname "$LOG")"
@@ -71,8 +98,13 @@ grep -q "Parent ID *: 00f067aa0ba902b7" "$LOG" || { echo "root span not parented
 grep -q "Parent ID *: $RUNNER_PARENT" "$LOG" || { echo "root span not parented to the traceparent extra var"; fail=1; }
 grep -q "flow.id: Str(e2e-flow)" "$LOG" || { echo "missing resource attribute flow.id"; fail=1; }
 grep -q "awx.workflow_job.id: Str(77)" "$LOG" || { echo "missing resource attribute awx.workflow_job.id"; fail=1; }
+plain=$(grep -c "Trace ID *: 4bf92f3577b34da6a3ce929d0e0e4736" "$LOG" || true)
+streamed=$(grep -c "Trace ID *: $STREAM_TRACE" "$LOG" || true)
+echo "streaming: $streamed spans (without streaming: $plain)"
+[ "$streamed" -eq "$plain" ] || { echo "streaming exported a different number of spans"; fail=1; }
+grep -q "Name *: Quick task before the hang\$" "$LOG" || { echo "hung job: finished task's span missing"; fail=1; }
 
 if [ $fail -ne 0 ]; then
     echo "FAIL: see $LOG"; exit 1
 fi
-echo "OK: traces exported over gRPC and HTTP, attached to TRACEPARENT and the traceparent extra var, tagged with the AWX job"
+echo "OK: traces exported over gRPC and HTTP, attached to TRACEPARENT and the traceparent extra var, tagged with the AWX job; streamed spans survive a killed job"
