@@ -76,6 +76,7 @@ run is traced twice.
 | `ANSIBLE_OPENTELEMETRY_HIDE_TASK_ARGUMENTS` | `true` | Keep task arguments out of spans |
 | `ANSIBLE_OPENTELEMETRY_DISABLE_LOGS` | `true` | Keep task results (incl. facts) out of spans |
 | `ANSIBLE_OPENTELEMETRY_STORE_SPANS_IN_FILE` | – | Write spans to a JSON file instead of exporting (also turns tracing on) |
+| `ANSIBLE_OPENTELEMETRY_STREAM_SPANS` | `false` | Export each task's span as soon as it finishes, so hung or killed jobs still leave spans (see [Streaming](#streaming-task-spans)) |
 | `JDC_TRACEPARENT` | *set by the callback* | Trace context of the playbook's root span, for tasks to pass on (see [below](#passing-the-trace-on-jdc_traceparent)); unset when tracing is off |
 
 These extra vars are read at the start of the run (with `-e`, from
@@ -273,9 +274,10 @@ AWX (no `JOB_ID`/`AWX_HOST`, no `awx_*` extra vars) nothing is added.
 
 ### Limitations
 
-- **Spans are exported at the end of the run.** The upstream callback builds
-  the whole trace in `v2_playbook_on_stats`. A job that hangs, is cancelled
-  or is killed exports no spans at all. Launching with `--monitor` /
+- **Spans are exported at the end of the run** unless
+  [streaming](#streaming-task-spans) is on. The upstream callback builds the
+  whole trace in `v2_playbook_on_stats`, so a job that hangs, is cancelled or
+  is killed exports no spans at all. Launching with `--monitor` /
   `wait: true` keeps the caller's span open for the job's duration, so the
   stall is still visible from the caller's side.
 - **A workflow has no span of its own.** Each workflow node is a separate job
@@ -286,6 +288,36 @@ AWX (no `JOB_ID`/`AWX_HOST`, no `awx_*` extra vars) nothing is added.
   the trace. For systems that don't, pass `flow_id` and log it there, then
   correlate on `flow.id`.
 - One trace per playbook run: the context is fixed when the first play starts.
+
+### Streaming task spans
+
+With `ANSIBLE_OPENTELEMETRY_STREAM_SPANS=true` each task's span (per host) is
+exported as soon as the task finishes on that host, in the background, so a
+job that hangs or is killed still shows how far it got: the last span tells
+you which task finished last, and the gap after it is where the job stalled.
+
+```bash
+podman run --rm -e OTEL_EXPORTER_OTLP_ENDPOINT=http://collector.example.com:4317 \
+  -e ANSIBLE_OPENTELEMETRY_STREAM_SPANS=true \
+  ghcr.io/jvzantvoort/jdc-execution-engine:1.2.1 ansible-playbook site.yml
+```
+
+For AWX, set it next to the other `OTEL_*` variables. Things to know:
+
+- The playbook's **root span is still exported at the end** (a span can only
+  be exported once it has ended). Until then, and forever for a killed job,
+  the task spans point to a parent that isn't there. They still show up in
+  the right trace; trace viewers flag the missing root span. The caller's
+  span (see `--monitor`) still covers the whole job.
+- Spans go out in batches every `OTEL_BSP_SCHEDULE_DELAY` milliseconds (1000
+  unless you set it). A job killed with SIGKILL loses at most the last batch.
+- The trace looks the same as without streaming: same spans, IDs, parents and
+  attributes. `include_*` tasks' extra "include" spans and anything that
+  couldn't be streamed are exported at the end as before.
+- With an unreachable endpoint the run still succeeds, but the end of the run
+  waits for the export timeout (`OTEL_EXPORTER_OTLP_TIMEOUT`) once more.
+- If streaming fails for any reason, the callback logs a warning and exports
+  the remaining spans at the end of the run.
 
 ## Verifying the image
 
@@ -331,7 +363,8 @@ weekly CI rebuild picks up base-image security fixes.
 make lint   # yamllint + ansible-lint (production profile)
 make test   # spans without args/results; AWX-style runs via ansible-runner (extra-var traceparent,
             # precedence, invalid values, JDC_TRACEPARENT, workflow attributes); silent without endpoint
-make e2e    # real Collector: OTLP over gRPC and HTTP, TRACEPARENT and extra-var parenting, AWX attributes
+make e2e    # real Collector: OTLP over gRPC and HTTP, TRACEPARENT and extra-var parenting, AWX attributes,
+            # streaming (same spans; a hung job's spans arrive before it is killed)
 ```
 
 CI runs all three; the build job only starts when lint passes. The e2e
@@ -362,6 +395,7 @@ CI runs all three on every build. Findings show up under the repo's
 │   └── callback/jdc_opentelemetry.py  # auto-enabling tracing callback
 ├── tests/
 │   ├── test.yml               # Smoke-test playbook
+│   ├── stream.yml             # A job that hangs (streaming e2e test)
 │   ├── ansible.cfg            # Simulated project config
 │   ├── e2e.sh                 # End-to-end export test
 │   ├── propagation.sh         # Trace context in (extra vars) and out (JDC_TRACEPARENT)

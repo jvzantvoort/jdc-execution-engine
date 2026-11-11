@@ -42,6 +42,9 @@ def check(spans, args):
     missing = EXPECTED - names
     if missing:
         return fail(f"missing spans: {sorted(missing)}")
+    # test.yml runs on one host, so a repeated name means a span was exported twice
+    if len(names) != len(spans):
+        return fail("duplicate spans")
     # Privacy defaults: no task arguments, no task results (facts) in spans
     leaked = [s["name"] for s in spans
               if s.get("events") or any(k.startswith("ansible.task.args") for k in s.get("attributes", {}))]
