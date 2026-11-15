@@ -22,7 +22,7 @@ BUILDER     = ansible-builder build --file execution-environment.yml --context c
 	--build-arg IMAGE_CREATED=$(CREATED)
 RUN_TEST    = $(ENGINE) run --rm -v $(CURDIR)/tests:/runner/project:ro,Z
 
-.PHONY: all help create build test e2e lint inspect lock scan sarif sbom push otel-up otel-down demo clean
+.PHONY: all help create build deps test e2e lint inspect lock scan sarif sbom push otel-up otel-down demo clean
 
 all: build
 
@@ -35,7 +35,11 @@ create: ## Generate the build context (Containerfile) only
 build: ## Build the EE image
 	$(BUILDER) --tag $(FULL_IMAGE)
 
-test: ## Smoke tests: spans produced, trace context propagation, silent when unconfigured
+deps: ## Python deps of requirements.txt and every collection: installed, locked, pip check clean
+	$(RUN_TEST) -v $(CURDIR)/requirements.txt:/tmp/requirements.txt:ro,Z \
+		$(FULL_IMAGE) python3.12 /runner/project/check_python_deps.py /etc/pip-constraints.txt /tmp/requirements.txt
+
+test: deps ## Smoke tests: spans produced, trace context propagation, silent when unconfigured
 	@echo "== tracing on (span file), with a project ansible.cfg that knows nothing about tracing"
 	$(RUN_TEST) -e ANSIBLE_CONFIG=/runner/project/ansible.cfg \
 		-e ANSIBLE_OPENTELEMETRY_STORE_SPANS_IN_FILE=/tmp/spans.json \

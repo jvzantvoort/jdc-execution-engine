@@ -21,7 +21,7 @@ callback plugin.
 | Python         | 3.12 (`/usr/bin/python3.12`)                           |
 | ansible-core   | 2.20.11                                                |
 | ansible-runner | 2.4.3                                                  |
-| Collections    | ansible.posix 2.2.2, ansible.utils 6.1.1, community.crypto 3.5.1, community.general 14.0.1 |
+| Collections    | ansible.posix 2.2.2, ansible.utils 6.1.1, community.crypto 3.5.1, community.general 14.0.1, community.proxmox 1.6.0, netbox.netbox 3.24.0 |
 | OpenTelemetry  | SDK 1.45.2, OTLP exporters (gRPC + HTTP/protobuf)      |
 
 ```bash
@@ -363,11 +363,13 @@ weekly CI rebuild picks up base-image security fixes.
 make lint   # yamllint + ansible-lint (production profile)
 make test   # spans without args/results; AWX-style runs via ansible-runner (extra-var traceparent,
             # precedence, invalid values, JDC_TRACEPARENT, workflow attributes); silent without endpoint
+make deps   # every Python requirement of requirements.txt and of each installed collection
+            # is installed, pinned in files/constraints.txt, and `pip check` is clean
 make e2e    # real Collector: OTLP over gRPC and HTTP, TRACEPARENT and extra-var parenting, AWX attributes,
             # streaming (same spans; a hung job's spans arrive before it is killed)
 ```
 
-CI runs all three; the build job only starts when lint passes. The e2e
+CI runs all of them; the build job only starts when lint passes. The e2e
 Collector log is kept as a workflow artifact when the test fails.
 
 ## Security scanning
@@ -399,6 +401,7 @@ CI runs all three on every build. Findings show up under the repo's
 │   ├── ansible.cfg            # Simulated project config
 │   ├── e2e.sh                 # End-to-end export test
 │   ├── propagation.sh         # Trace context in (extra vars) and out (JDC_TRACEPARENT)
+│   ├── check_python_deps.py   # Python deps of collections installed and locked
 │   ├── e2e-collector.yaml     # Collector config for the e2e test
 │   └── verify_spans.py        # Asserts a trace was produced without args/results, checks parenting
 ├── otel/                      # Local Collector + Jaeger (podman/docker compose)

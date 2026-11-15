@@ -34,7 +34,9 @@ protobuf==7.36.2
 proxmoxer==2.3.0
 ptyprocess==0.7.0
 pycparser==3.12
+pynetbox==7.9.0
 python-daemon==3.1.2
+pytz==2026.6
 PyYAML==6.0.3
 referencing==0.37.0
 requests==2.34.2
