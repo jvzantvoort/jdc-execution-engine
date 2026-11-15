@@ -2,6 +2,7 @@
 # Exact versions are locked in files/constraints.txt.
 jmespath
 netaddr
+proxmoxer
 # OpenTelemetry: needed by the community.general.opentelemetry callback
 opentelemetry-api
 opentelemetry-sdk
